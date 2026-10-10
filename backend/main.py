@@ -386,4 +386,4 @@ async def weather_chat(request: ChatRequest):
         "route_weather": route_weather,
         "route_error": route_error,
         "route_weather_error": route_weather_error,
-    }s
+    }
