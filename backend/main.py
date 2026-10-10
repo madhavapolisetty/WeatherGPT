@@ -1,3 +1,4 @@
+
 import re
 from urllib.parse import quote_plus
 
@@ -17,11 +18,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Allow requests from the local development website
+# and your deployed Vercel website.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://weathergpt-29c5d9rku-madhavapolisetty.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -90,7 +94,7 @@ def extract_route_locations(question: str):
         destination = match.group(2).strip(" ,.!?")
 
         destination = re.sub(
-            r"\s+(right\s+now|at\s+the\s+moment|now|today|"
+            r"\s+(right\s+now|at\s+the+moment|now|today|"
             r"tomorrow|tonight|this morning|this afternoon|"
             r"this evening)$",
             "",
@@ -106,7 +110,9 @@ def extract_route_locations(question: str):
 
 def extract_weather_city(question: str) -> str | None:
     """
-    Detect a location in questions such as:
+    Detect a location in common weather questions.
+
+    Examples:
     - How is the weather in Chirala?
     - Give me the forecast for Hyderabad tomorrow.
     - Will it rain in Chennai?
@@ -126,8 +132,7 @@ def extract_weather_city(question: str) -> str | None:
 
     cleaned = question.strip()
 
-    # Remove forecast periods and time phrases before detecting
-    # the location. For example, "for the next 7 days".
+    # Remove forecast periods and time phrases.
     cleaned = re.sub(
         r"\b(?:for\s+)?(?:the\s+)?next\s+\d+\s+days?\b",
         " ",
@@ -183,7 +188,6 @@ def extract_weather_city(question: str) -> str | None:
 
         city = match.group(1).strip(" \t,.;:!?")
 
-        # Do not treat generic time phrases as city names.
         if not city or city.lower() in {
             "the",
             "next",
@@ -282,11 +286,11 @@ async def weather_chat(request: ChatRequest):
     route_error = None
     route_weather_error = None
 
-    # 6. Calculate route and endpoint weather when requested.
+    # 6. Calculate the route and weather at both endpoints.
     if route_locations:
         origin, destination = route_locations
 
-        # Keep a Google Maps link even if the routing API fails.
+        # Keep a Google Maps link even if routing fails.
         route_url = create_google_maps_route_url(
             origin,
             destination,
@@ -330,7 +334,6 @@ async def weather_chat(request: ChatRequest):
                 "Check the place names or use Google Maps."
             )
 
-        # Fetch weather at both route endpoints.
         if route_info is not None:
             try:
                 route_weather = await get_route_weather(route_info)
@@ -383,4 +386,4 @@ async def weather_chat(request: ChatRequest):
         "route_weather": route_weather,
         "route_error": route_error,
         "route_weather_error": route_weather_error,
-    }
+    }s
