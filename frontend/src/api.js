@@ -1,8 +1,17 @@
 
 import axios from "axios";
 
+const localBackend = "http://127.0.0.1:8000";
+const deployedBackend =
+  "https://weathergpt-backend-kw2c.onrender.com";
+
+const configuredBackend =
+  import.meta.env.VITE_API_BASE_URL?.trim();
+
 const api = axios.create({
-  baseURL: "http://127.0.0.1:8000",
+  baseURL:
+    configuredBackend ||
+    (import.meta.env.DEV ? localBackend : deployedBackend),
   timeout: 20000,
 });
 
