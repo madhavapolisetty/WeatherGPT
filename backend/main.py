@@ -18,7 +18,10 @@ app = FastAPI(
 )
 
 
-# Allow local development and the deployed Vercel website.
+# --------------------------------------------------
+# CORS: local development and deployed Vercel website
+# --------------------------------------------------
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -31,6 +34,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# --------------------------------------------------
+# Basic endpoints
+# --------------------------------------------------
 
 @app.get("/")
 def home():
@@ -46,16 +53,25 @@ def health():
 
 
 # --------------------------------------------------
-# Error logging helpers
+# Safe error logging helpers
+# Never print full request URLs because they may
+# contain API keys in their query parameters.
 # --------------------------------------------------
 
 def log_weather_http_error(
     exc: httpx.HTTPStatusError,
     context: str = "Weather provider",
 ):
-    """Log the upstream HTTP status and response for diagnosis."""
     print(f"{context} HTTP status:", exc.response.status_code)
-    print(f"{context} URL:", exc.request.url)
+
+    request_url = exc.request.url
+    safe_endpoint = (
+        f"{request_url.scheme}://"
+        f"{request_url.host}"
+        f"{request_url.path}"
+    )
+
+    print(f"{context} endpoint:", safe_endpoint)
     print(f"{context} response:", exc.response.text[:500])
 
 
@@ -63,11 +79,8 @@ def log_weather_request_error(
     exc: httpx.RequestError,
     context: str = "Weather provider",
 ):
-    """Log network and timeout errors."""
-    print(f"{context} connection error:", repr(exc))
-
-    if exc.request is not None:
-        print(f"{context} URL:", exc.request.url)
+    # Do not print full URLs or query parameters.
+    print(f"{context} connection error:", type(exc).__name__)
 
 
 # --------------------------------------------------
@@ -95,6 +108,17 @@ async def weather(
         raise HTTPException(
             status_code=502,
             detail="Unable to connect to the weather provider",
+        ) from exc
+
+    except (RuntimeError, ValueError) as exc:
+        print("Weather service configuration or data error:", str(exc))
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weather service is not configured correctly "
+                "or returned unusable data. Check the backend logs."
+            ),
         ) from exc
 
     if result is None:
@@ -154,17 +178,18 @@ def extract_route_locations(question: str):
 
 
 # --------------------------------------------------
-# Extract city from weather questions
+# Extract a city from weather questions
 # --------------------------------------------------
 
 def extract_weather_city(question: str) -> str | None:
     """
-    Detect common weather questions, for example:
+    Detect common weather questions, such as:
     - How is the weather in Chirala?
     - Give me the forecast for Hyderabad tomorrow.
     - Will it rain in Chennai?
     - What is the temperature in New York?
     - Chirala weather forecast.
+    - Give me the next 7 days forecast for Mumbai.
     """
 
     weather_words = (
@@ -178,7 +203,7 @@ def extract_weather_city(question: str) -> str | None:
 
     cleaned = question.strip()
 
-    # Remove forecast periods and common time phrases.
+    # Remove forecast periods.
     cleaned = re.sub(
         r"\b(?:for\s+)?(?:the\s+)?next\s+\d+\s+days?\b",
         " ",
@@ -186,6 +211,7 @@ def extract_weather_city(question: str) -> str | None:
         flags=re.IGNORECASE,
     )
 
+    # Remove common time expressions.
     cleaned = re.sub(
         r"\b(?:right now|at the moment|currently|today|tomorrow|"
         r"tonight|this morning|this afternoon|this evening|"
@@ -196,19 +222,19 @@ def extract_weather_city(question: str) -> str | None:
     )
 
     patterns = [
-        # "weather in Chirala", "forecast for Hyderabad"
+        # Examples: "weather in Chirala", "forecast for Hyderabad"
         r"\b(?:weather|forecast|temperature|conditions?)\s+"
         r"(?:in|for|at|of)\s+"
         r"([\w][\w .'-]*?)"
         r"(?=\s+(?:like|and|versus|vs|with|during)\b|[?.!,;]|$)",
 
-        # "Will it rain in Chennai?"
+        # Examples: "Will it rain in Chennai?"
         # "What is the temperature in New York?"
         r"\b(?:in|at|for|of)\s+"
         r"([\w][\w .'-]*?)"
         r"(?=\s+(?:like|and|versus|vs|with|during)\b|[?.!,;]|$)",
 
-        # "Chirala weather", "Hyderabad forecast"
+        # Examples: "Chirala weather", "Hyderabad forecast"
         r"^\s*(?:what(?:'s| is)?\s+)?"
         r"([\w][\w .'-]*?)\s+"
         r"(?:weather|forecast|temperature|conditions?)\b",
@@ -287,20 +313,20 @@ def create_google_maps_url_from_coordinates(route_info: dict):
 @app.post("/api/chat")
 async def weather_chat(request: ChatRequest):
 
-    # Detect route questions first.
+    # 1. Detect whether the question asks about a route.
     route_locations = extract_route_locations(request.question)
 
-    # Use the dashboard city by default.
+    # 2. Default to the city selected in the frontend.
     weather_city = request.city
 
-    # Select a city mentioned in ordinary weather questions.
+    # 3. Use the city mentioned in ordinary weather questions.
     if not route_locations:
         mentioned_city = extract_weather_city(request.question)
 
         if mentioned_city:
             weather_city = mentioned_city
 
-    # Fetch weather for the selected or detected city.
+    # 4. Fetch weather data for the appropriate location.
     try:
         weather_data = await get_weather(weather_city)
 
@@ -320,6 +346,17 @@ async def weather_chat(request: ChatRequest):
             detail="Unable to connect to the weather provider",
         ) from exc
 
+    except (RuntimeError, ValueError) as exc:
+        print("Chat weather configuration or data error:", str(exc))
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Weather service is not configured correctly "
+                "or returned unusable data. Check the backend logs."
+            ),
+        ) from exc
+
     if weather_data is None:
         raise HTTPException(
             status_code=404,
@@ -329,18 +366,18 @@ async def weather_chat(request: ChatRequest):
             ),
         )
 
-    # Initialise route information.
+    # 5. Initialize route information.
     route_info = None
     route_weather = None
     route_url = None
     route_error = None
     route_weather_error = None
 
-    # Calculate the route when requested.
+    # 6. Calculate a route if requested.
     if route_locations:
         origin, destination = route_locations
 
-        # Keep a Google Maps link even if routing fails.
+        # Keep a Google Maps link even if route calculation fails.
         route_url = create_google_maps_route_url(
             origin,
             destination,
@@ -367,7 +404,7 @@ async def weather_chat(request: ChatRequest):
             )
 
         except httpx.RequestError as exc:
-            print("TomTom connection error:", repr(exc))
+            print("TomTom connection error:", type(exc).__name__)
 
             route_error = (
                 "Unable to contact the routing service right now."
@@ -381,13 +418,16 @@ async def weather_chat(request: ChatRequest):
                 "Check the place names or use Google Maps."
             )
 
-        # Fetch weather at both endpoints if routing succeeded.
+        # 7. Fetch weather for departure and destination.
         if route_info is not None:
             try:
                 route_weather = await get_route_weather(route_info)
 
             except httpx.HTTPStatusError as exc:
-                log_weather_http_error(exc, "Route weather provider")
+                log_weather_http_error(
+                    exc,
+                    "Route weather provider",
+                )
 
                 route_weather_error = (
                     "Weather at one or both route endpoints "
@@ -412,7 +452,7 @@ async def weather_chat(request: ChatRequest):
                     "Weather at both route endpoints is unavailable."
                 )
 
-    # Generate the answer using actual weather and route data.
+    # 8. Generate the answer using the fetched data.
     try:
         answer = await answer_weather_question(
             question=request.question,
@@ -430,6 +470,7 @@ async def weather_chat(request: ChatRequest):
             detail=str(exc),
         ) from exc
 
+    # 9. Return the answer and supporting data.
     return {
         "city": request.city,
         "weather_city": weather_city,
