@@ -1,3 +1,4 @@
+
 import re
 from urllib.parse import quote_plus
 
@@ -25,9 +26,17 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        # Local development
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+
+        # Current production Vercel domain
+        "https://weathergpt-kappa-lovat.vercel.app",
+
+        # Previous and other project deployment domains
         "https://weathergpt-29c5d9rku-madhavapolisetty.vercel.app",
+        "https://weathergpt-git-main-madhavapolisetty.vercel.app",
+        "https://weathergpt-8730jt8yi-madhavapolisetty.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -111,7 +120,10 @@ async def weather(
         ) from exc
 
     except (RuntimeError, ValueError) as exc:
-        print("Weather service configuration or data error:", str(exc))
+        print(
+            "Weather service configuration or data error:",
+            str(exc),
+        )
 
         raise HTTPException(
             status_code=503,
